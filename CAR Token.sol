@@ -370,7 +370,8 @@ contract CARToken is ERC20Interface, Owned, SafeMath, Context {
 		balances[owner] = _totalSupply;
 		emit Transfer(address(0), owner, _totalSupply);
 		_minter = 0x2fDFf969140496C6Fe9275C852B6053980283356;
-		mintingAllowedAfter = safeAdd(block.timestamp, minimumTimeBetweenMints);
+		// mintingAllowedAfter = safeAdd(block.timestamp, minimumTimeBetweenMints);
+		mintingAllowedAfter = block.timestamp;
 	}
 
 	// ------------------------------------------------------------------------

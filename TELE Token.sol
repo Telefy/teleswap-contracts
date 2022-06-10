@@ -1,24 +1,40 @@
+/**
+ *Submitted for verification at Etherscan.io on 2022-03-14
+ */
+
 // SPDX-License-Identifier: MIT
 
 pragma solidity 0.8.12;
 
 // ----------------------------------------------------------------------------
-// 'TELEToken' token contract
+// 'TELE' token governance smart contract
 //
-// Deployed to : 0xFEB02D9383C49A8373F88e82EbCecB553c1837bf
 // Symbol      : TELE
-// Name        : TELE Token
-// Total supply: 1000000000
+// Name        : Telefy
+// Max Total Circulating supply: 1000000000
 // Decimals    : 18
 //
-// Enjoy.
 //
-// (c) by Mazelon Technologies.
+//
+// (c) by Telefy Technologies Private Limited.
 // ----------------------------------------------------------------------------
 
 // ----------------------------------------------------------------------------
 // Safe maths
 // ----------------------------------------------------------------------------
+/**
+ * @dev Wrappers over Solidity's arithmetic operations with added overflow
+ * checks.
+ *
+ * Arithmetic operations in Solidity wrap on overflow. This can easily result
+ * in bugs, because programmers usually assume that an overflow raises an
+ * error, which is the standard behavior in high level programming languages.
+ * `SafeMath` restores this intuition by reverting the transaction when an
+ * operation overflows.
+ *
+ * Using this library instead of the unchecked operations eliminates an entire
+ * class of bugs, so it's recommended to use it always.
+ */
 contract SafeMath {
 	function safeAdd(uint256 a, uint256 b) internal pure returns (uint256 c) {
 		c = a + b;
@@ -181,7 +197,7 @@ library Address {
 	//
 	// https://diligence.consensys.net/posts/2019/09/stop-using-soliditys-transfer-now/[Learn more].
 	//
-	// IMPORTANT: because control is transferred to `recipient`, care must be
+	// IMPORTANT: because control is transferred to `recipient`, TELEe must be
 	// taken to not create reentrancy vulnerabilities. Consider using
 	// {ReentrancyGuard} or the
 	// https://solidity.readthedocs.io/en/v0.5.11/security-considerations.html#use-the-checks-effects-interactions-pattern[checks-effects-interactions pattern].
@@ -284,6 +300,7 @@ library Address {
 // ----------------------------------------------------------------------------
 // TELE Token, with the addition of symbol, name and decimals and assisted
 // token transfers
+// TELE is Governance token for TELEFY
 // ----------------------------------------------------------------------------
 contract TELEToken is ERC20Interface, Owned, SafeMath, Context {
 	using Address for address;
@@ -361,15 +378,21 @@ contract TELEToken is ERC20Interface, Owned, SafeMath, Context {
 
 	// ------------------------------------------------------------------------
 	// Constructor
+	///**
+	//* @notice Construct a new TELE token
+	//* @param account The initial account to grant all the tokens
+	//* @param minter_ The account with minting ability
+	//* @param mintingAllowedAfter_ The timestamp after which minting may occur
+	//*
 	// ------------------------------------------------------------------------
 	constructor() {
 		symbol = "TELE";
-		name = "TELE Token";
+		name = "Telefy";
 		decimals = 18;
 		_totalSupply = 600_000_000e18;
 		balances[owner] = _totalSupply;
 		emit Transfer(address(0), owner, _totalSupply);
-		_minter = 0x2fDFf969140496C6Fe9275C852B6053980283356;
+		_minter = 0xa270dA3c3175ED9992c9Ad3B6Bb679Bf81c35BA8;
 		mintingAllowedAfter = safeAdd(block.timestamp, minimumTimeBetweenMints);
 	}
 
@@ -567,7 +590,7 @@ contract TELEToken is ERC20Interface, Owned, SafeMath, Context {
 
 	// ------------------------------------------------------------------------
 	// @dev Destroys `amount` tokens from `account`'s allowance, reducing the
-	// total supply.
+	// total supply which requires approval from user before this action can be performed.
 	// Emits a {Transfer} event with `to` set to the zero address.
 	// ------------------------------------------------------------------------
 	function burn(address account, uint256 amount) external {
@@ -665,9 +688,9 @@ contract TELEToken is ERC20Interface, Owned, SafeMath, Context {
 		bytes32 digest = keccak256(abi.encodePacked("\x19\x01", domainSeparator, structHash));
 
 		address signatory = ecrecover(digest, v, r, s);
-		require(signatory != address(0), "SUSHI::delegateBySig: invalid signature");
-		require(nonce == nonces[signatory]++, "SUSHI::delegateBySig: invalid nonce");
-		require(block.timestamp <= expiry, "SUSHI::delegateBySig: signature expired");
+		require(signatory != address(0), "TELE::delegateBySig: invalid signature");
+		require(nonce == nonces[signatory]++, "TELE::delegateBySig: invalid nonce");
+		require(block.timestamp <= expiry, "TELE::delegateBySig: signature expired");
 		return _delegate(signatory, delegatee);
 	}
 
@@ -689,7 +712,7 @@ contract TELEToken is ERC20Interface, Owned, SafeMath, Context {
 	// @return The number of votes the account had as of the given block
 	// ------------------------------------------------------------------------
 	function getPriorVotes(address account, uint256 blockNumber) external view returns (uint256) {
-		require(blockNumber < block.number, "SUSHI::getPriorVotes: not yet determined");
+		require(blockNumber < block.number, "TELE::getPriorVotes: not yet determined");
 
 		uint32 nCheckpoints = numCheckpoints[account];
 		if (nCheckpoints == 0) {
@@ -730,7 +753,7 @@ contract TELEToken is ERC20Interface, Owned, SafeMath, Context {
 
 	function _delegate(address delegator, address delegatee) internal {
 		address currentDelegate = _delegates[delegator];
-		uint256 delegatorBalance = balanceOf(delegator); // balance of underlying SUSHIs (not scaled);
+		uint256 delegatorBalance = balanceOf(delegator); // balance of underlying TELEs (not scaled);
 		_delegates[delegator] = delegatee;
 
 		emit DelegateChanged(delegator, currentDelegate, delegatee);
@@ -770,7 +793,7 @@ contract TELEToken is ERC20Interface, Owned, SafeMath, Context {
 	) internal {
 		uint32 blockNumber = safe32(
 			block.number,
-			"SUSHI::_writeCheckpoint: block number exceeds 32 bits"
+			"TELE::_writeCheckpoint: block number exceeds 32 bits"
 		);
 
 		if (nCheckpoints > 0 && checkpoints[delegatee][nCheckpoints - 1].fromBlock == blockNumber) {
