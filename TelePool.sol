@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
+pragma solidity ^0.8.16;
 
-import "@openzeppelin-4.5.0/contracts/access/Ownable.sol";
-import "@openzeppelin-4.5.0/contracts/token/ERC20/utils/SafeERC20.sol";
-import "@openzeppelin-4.5.0/contracts/security/Pausable.sol";
+import "@openzeppelin/contracts@4.5.0/access/Ownable.sol";
+import "@openzeppelin/contracts@4.5.0/token/ERC20/utils/SafeERC20.sol";
+import "@openzeppelin/contracts@4.5.0/security/Pausable.sol";
 
 contract TelePool is Ownable, Pausable {
 	using SafeERC20 for IERC20;
@@ -34,6 +34,10 @@ contract TelePool is Ownable, Pausable {
 	uint256 public totalBoostDebt; // total boost debt.
 	uint256 public totalLockedAmount; // total lock amount.
 
+	uint256 private _totalBalanceTemp; // temporary balance to calculate reward per block
+	uint256 public startBlock; // start block of the stake pool
+	uint256 private _lastRewardBlock; // update bblock after
+
 	uint256 public constant MAX_PERFORMANCE_FEE = 2000; // 20%
 	uint256 public constant MAX_WITHDRAW_FEE = 500; // 5%
 	uint256 public constant MAX_OVERDUE_FEE = 100 * 1e10; // 100%
@@ -50,6 +54,9 @@ contract TelePool is Ownable, Pausable {
 	uint256 public DURATION_FACTOR = 365 days; // 365 days, in order to calculate user additional boost.
 	uint256 public DURATION_FACTOR_OVERDUE = 180 days; // 180 days, in order to calculate overdue fee.
 	uint256 public BOOST_WEIGHT = 100 * 1e10; // 100%
+
+	uint256 public constant MIN_TELE_PER_BLOCK = 1e18; // 1 TELE
+	uint256 public TELE_PER_BLOCK = 10e18; // 10 TELE
 
 	uint256 public performanceFee = 200; // 2%
 	uint256 public performanceFeeContract = 200; // 2%
@@ -91,6 +98,7 @@ contract TelePool is Ownable, Pausable {
 	event NewDurationFactorOverdue(uint256 durationFactorOverdue);
 	event NewUnlockFreeDuration(uint256 unlockFreeDuration);
 	event NewBoostWeight(uint256 boostWeight);
+	event NewTelePerBlock(uint256 telePerBlock);
 
 	/**
 	 * @notice Constructor
@@ -103,12 +111,15 @@ contract TelePool is Ownable, Pausable {
 		IERC20 _token,
 		address _admin,
 		address _treasury,
-		address _operator
+		address _operator,
+		uint256 _startBlock
 	) {
 		token = _token;
 		admin = _admin;
 		treasury = _treasury;
 		operator = _operator;
+		startBlock = _startBlock;
+		_lastRewardBlock = _startBlock;
 	}
 
 	/**
@@ -136,7 +147,7 @@ contract TelePool is Ownable, Pausable {
 		if (user.shares > 0) {
 			if (user.locked) {
 				// Calculate the user's current token amount and update related parameters.
-				uint256 currentAmount = (balanceOf() * (user.shares)) /
+				uint256 currentAmount = (updateRewardAndGetBalance() * (user.shares)) /
 					totalShares -
 					user.userBoostedShare;
 				totalBoostDebt -= user.userBoostedShare;
@@ -158,11 +169,16 @@ contract TelePool is Ownable, Pausable {
 					uint256 overdueWeight = (overdueDuration * overdueFee) /
 						DURATION_FACTOR_OVERDUE;
 					uint256 currentOverdueFee = (earnAmount * overdueWeight) / PRECISION_FACTOR;
+					require(
+						_totalBalanceTemp >= currentOverdueFee,
+						"Total balance is lesser than overdue fee"
+					);
+					_totalBalanceTemp -= currentOverdueFee;
 					token.safeTransfer(treasury, currentOverdueFee);
 					currentAmount -= currentOverdueFee;
 				}
 				// Recalculate the user's share.
-				uint256 pool = balanceOf();
+				uint256 pool = updateRewardAndGetBalance();
 				uint256 currentShares;
 				if (totalShares != 0) {
 					currentShares = (currentAmount * totalShares) / (pool - currentAmount);
@@ -182,7 +198,7 @@ contract TelePool is Ownable, Pausable {
 				}
 			} else if (!freePerformanceFeeUsers[_user]) {
 				// Calculate Performance fee.
-				uint256 totalAmount = (user.shares * balanceOf()) / totalShares;
+				uint256 totalAmount = (user.shares * updateRewardAndGetBalance()) / totalShares;
 				totalShares -= user.shares;
 				user.shares = 0;
 				uint256 earnAmount = totalAmount - user.teleAtLastUserAction;
@@ -192,11 +208,16 @@ contract TelePool is Ownable, Pausable {
 				}
 				uint256 currentPerformanceFee = (earnAmount * feeRate) / 10000;
 				if (currentPerformanceFee > 0) {
+					require(
+						_totalBalanceTemp >= currentPerformanceFee,
+						"Total balance is lesser than performance fee"
+					);
+					_totalBalanceTemp -= currentPerformanceFee;
 					token.safeTransfer(treasury, currentPerformanceFee);
 					totalAmount -= currentPerformanceFee;
 				}
 				// Recalculate the user's share.
-				uint256 pool = balanceOf();
+				uint256 pool = updateRewardAndGetBalance();
 				uint256 newShares;
 				if (totalShares != 0) {
 					newShares = (totalAmount * totalShares) / (pool - totalAmount);
@@ -269,6 +290,8 @@ contract TelePool is Ownable, Pausable {
 		// Handle stock funds.
 		if (totalShares == 0) {
 			uint256 stockAmount = available();
+			require(_totalBalanceTemp >= stockAmount, "Total balance is lesser than stock amount");
+			_totalBalanceTemp -= stockAmount;
 			token.safeTransfer(treasury, stockAmount);
 		}
 		// Update user share.
@@ -288,8 +311,9 @@ contract TelePool is Ownable, Pausable {
 		uint256 currentShares;
 		uint256 currentAmount;
 		uint256 userCurrentLockedBalance;
-		uint256 pool = balanceOf();
+		uint256 pool = updateRewardAndGetBalance();
 		if (_amount > 0) {
+			_totalBalanceTemp += _amount;
 			token.safeTransferFrom(_user, address(this), _amount);
 			currentAmount = _amount;
 		}
@@ -348,7 +372,7 @@ contract TelePool is Ownable, Pausable {
 		totalShares += currentShares;
 
 		user.teleAtLastUserAction =
-			(user.shares * balanceOf()) /
+			(user.shares * updateRewardAndGetBalance()) /
 			totalShares -
 			user.userBoostedShare;
 		user.lastUserActionTime = block.timestamp;
@@ -395,7 +419,7 @@ contract TelePool is Ownable, Pausable {
 		updateUserShare(msg.sender);
 
 		if (_shares == 0 && _amount > 0) {
-			uint256 pool = balanceOf();
+			uint256 pool = updateRewardAndGetBalance();
 			currentShare = (_amount * totalShares) / pool; // Calculate equivalent shares
 			if (currentShare > user.shares) {
 				currentShare = user.shares;
@@ -403,7 +427,7 @@ contract TelePool is Ownable, Pausable {
 		} else {
 			currentShare = (sharesPercent * user.shares) / PRECISION_FACTOR_SHARE;
 		}
-		uint256 currentAmount = (balanceOf() * currentShare) / totalShares;
+		uint256 currentAmount = (updateRewardAndGetBalance() * currentShare) / totalShares;
 		user.shares -= currentShare;
 		totalShares -= currentShare;
 
@@ -417,14 +441,23 @@ contract TelePool is Ownable, Pausable {
 				feeRate = withdrawFeeContract;
 			}
 			uint256 currentWithdrawFee = (currentAmount * feeRate) / 10000;
+			require(
+				_totalBalanceTemp >= currentWithdrawFee,
+				"Total balance is lesser than withdraw fee"
+			);
+			_totalBalanceTemp -= currentWithdrawFee;
 			token.safeTransfer(treasury, currentWithdrawFee);
 			currentAmount -= currentWithdrawFee;
 		}
-
+		require(
+			_totalBalanceTemp >= currentAmount,
+			"Total balance is lesser than withdrawal amount"
+		);
+		_totalBalanceTemp -= currentAmount;
 		token.safeTransfer(msg.sender, currentAmount);
 
 		if (user.shares > 0) {
-			user.teleAtLastUserAction = (user.shares * balanceOf()) / totalShares;
+			user.teleAtLastUserAction = (user.shares * updateRewardAndGetBalance()) / totalShares;
 		} else {
 			user.teleAtLastUserAction = 0;
 		}
@@ -639,6 +672,19 @@ contract TelePool is Ownable, Pausable {
 	}
 
 	/**
+	 * @notice Set TELE_PER_BLOCK
+	 * @dev Only callable by the contract admin.
+	 */
+	function setTelePerBlock(uint256 _telePerBlock) external onlyAdmin {
+		require(
+			_telePerBlock < MIN_TELE_PER_BLOCK,
+			"TELE_PER_BLOCK should not be lesser than minimum TELE limit"
+		);
+		TELE_PER_BLOCK = _telePerBlock;
+		emit NewTelePerBlock(_telePerBlock);
+	}
+
+	/**
 	 * @notice Withdraw unexpected tokens sent to the TELE Pool
 	 */
 	function inCaseTokensGetStuck(address _token) external onlyAdmin {
@@ -700,7 +746,7 @@ contract TelePool is Ownable, Pausable {
 			!freeOverdueFeeUsers[_user] &&
 			((user.lockEndTime + UNLOCK_FREE_DURATION) < block.timestamp)
 		) {
-			uint256 pool = balanceOf() + calculateTotalPendingTeleRewards();
+			uint256 pool = balanceOf();
 			uint256 currentAmount = (pool * (user.shares)) / totalShares - user.userBoostedShare;
 			uint256 earnAmount = currentAmount - user.lockedAmount;
 			uint256 overdueDuration = block.timestamp - user.lockEndTime - UNLOCK_FREE_DURATION;
@@ -773,7 +819,20 @@ contract TelePool is Ownable, Pausable {
 	 * @dev It includes tokens held by the contract and the boost debt amount.
 	 */
 	function balanceOf() public view returns (uint256) {
-		return token.balanceOf(address(this)) + totalBoostDebt;
+		return
+			(block.number <= _lastRewardBlock)
+				? (_totalBalanceTemp + totalBoostDebt)
+				: ((block.number - _lastRewardBlock) * TELE_PER_BLOCK) +
+					_totalBalanceTemp +
+					totalBoostDebt;
+	}
+
+	function updateRewardAndGetBalance() public returns (uint256) {
+		if (block.number > _lastRewardBlock) {
+			_totalBalanceTemp += ((block.number - _lastRewardBlock) * TELE_PER_BLOCK);
+			_lastRewardBlock = block.number;
+		}
+		return _totalBalanceTemp + totalBoostDebt;
 	}
 
 	/**
